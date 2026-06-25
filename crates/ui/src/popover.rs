@@ -1,8 +1,9 @@
 use gpui::{
-    Anchor, AnyElement, App, Bounds, Context, Deferred, DismissEvent, Div, ElementId,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
-    MouseButton, ParentElement, Pixels, Point, Render, RenderOnce, Stateful, StyleRefinement,
-    Styled, Subscription, Window, anchored, deferred, div, prelude::FluentBuilder as _, px,
+    Anchor, AnyElement, App, Bounds, Context, Deferred, DispatchPhase, DismissEvent, Div,
+    ElementId, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
+    KeyBinding, MouseButton, ParentElement, Pixels, Point, Render, RenderOnce, Stateful,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Subscription, TouchEvent,
+    TouchPhase, Window, anchored, deferred, div, prelude::FluentBuilder as _, px,
 };
 use std::{cell::Cell, rc::Rc};
 
@@ -210,6 +211,7 @@ pub struct PopoverState {
     previous_focus_handle: Option<FocusHandle>,
     trigger_bounds: Bounds<Pixels>,
     trigger_bounds_captured: bool,
+    content_bounds: Bounds<Pixels>,
     open: bool,
     on_open_change: Option<Rc<dyn Fn(&bool, &mut Window, &mut App)>>,
 
@@ -224,6 +226,7 @@ impl PopoverState {
             previous_focus_handle: None,
             trigger_bounds: Bounds::default(),
             trigger_bounds_captured: false,
+            content_bounds: Bounds::default(),
             open: default_open,
             on_open_change: None,
             _dismiss_subscription: None,
@@ -399,12 +402,12 @@ impl RenderOnce for Popover {
         let el = div()
             .id(self.id)
             .child((trigger)(open, window, cx))
-            .on_mouse_down(self.mouse_button, {
+            .on_click({
                 let state = state.clone();
                 move |_, window, cx| {
                     cx.stop_propagation();
                     state.update(cx, |state, cx| {
-                        // We force set open to false to toggle it correctly.
+                        // We force set open to the current state to toggle it correctly.
                         // Because if the mouse down out will toggle open first.
                         state.set_open(open, cx);
                         state.toggle_open(window, cx);
@@ -457,6 +460,40 @@ impl RenderOnce for Popover {
                     })
                 })
                 .refine_style(&self.style);
+
+        // Capture the content bounds so we can dismiss the popover on a native
+        // touch outside both the popover content and its trigger.
+        let popover_content = div()
+            .relative()
+            .child(popover_content)
+            .on_prepaint({
+                let state = state.clone();
+                move |bounds, _, cx| {
+                    state.update(cx, |state, _| state.content_bounds = bounds);
+                }
+            });
+
+        if self.overlay_closable {
+            let state = state.clone();
+            window.on_touch_event(move |event: &TouchEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || event.phase != TouchPhase::Started {
+                    return;
+                }
+                let content_bounds = state.read(cx).content_bounds;
+                let trigger_bounds = state.read(cx).trigger_bounds;
+                if content_bounds.is_empty() || trigger_bounds.is_empty() {
+                    return;
+                }
+                let pos = event.position;
+                if !content_bounds.contains(&pos) && !trigger_bounds.contains(&pos) {
+                    state.update(cx, |state, cx| {
+                        state.dismiss(window, cx);
+                    });
+                    cx.notify(parent_view_id);
+                    cx.stop_propagation();
+                }
+            });
+        }
 
         el.child(Self::render_popover(
             self.anchor,

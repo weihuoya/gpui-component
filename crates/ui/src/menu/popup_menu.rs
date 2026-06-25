@@ -10,11 +10,12 @@ use gpui::{
     ParentElement, Pixels, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
     WeakEntity, Window, anchored, div, prelude::FluentBuilder, px, rems,
 };
-use gpui::{ClickEvent, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription};
+use gpui::{ClickEvent, DispatchPhase, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription, TouchEvent, TouchPhase};
 
 use std::rc::Rc;
 
 const CONTEXT: &str = "PopupMenu";
+const TOUCH_SCROLL_THRESHOLD: Pixels = px(8.0);
 
 pub fn init(cx: &mut App) {
     cx.bind_keys([
@@ -288,6 +289,13 @@ pub struct PopupMenu {
     scrollable: bool,
     external_link_icon: bool,
     scroll_handle: ScrollHandle,
+    touch_start: Option<Point<Pixels>>,
+    touch_last: Option<Point<Pixels>>,
+    touch_scrolling: bool,
+    // Cumulative scroll offset maintained during an active touch gesture.
+    touch_scroll_offset: Option<Point<Pixels>>,
+    // Bounds of the outer popup-menu container, updated on render.
+    outer_bounds: Bounds<Pixels>,
     // This will update on render
     submenu_anchor: (Anchor, Pixels),
 
@@ -309,6 +317,11 @@ impl PopupMenu {
             bounds: Bounds::default(),
             scrollable: false,
             scroll_handle: ScrollHandle::default(),
+            touch_start: None,
+            touch_last: None,
+            touch_scrolling: false,
+            touch_scroll_offset: None,
+            outer_bounds: Bounds::default(),
             external_link_icon: true,
             size: Size::default(),
             submenu_anchor: (Anchor::TopLeft, Pixels::ZERO),
@@ -983,6 +996,23 @@ impl PopupMenu {
         self.dismiss(&Cancel, window, cx);
     }
 
+    /// Returns true if the position is inside this menu or any of its submenus.
+    fn hit_test_menu(&self, position: &Point<Pixels>, cx: &App) -> bool {
+        if self.outer_bounds.contains(position) {
+            return true;
+        }
+
+        for item in &self.menu_items {
+            if let PopupMenuItem::Submenu { menu, .. } = item {
+                if menu.read(cx).hit_test_menu(position, cx) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     fn on_mouse_down_out(
         &mut self,
         e: &MouseDownEvent,
@@ -1285,6 +1315,94 @@ impl Render for PopupMenu {
         self.update_submenu_menu_anchor(window);
 
         let view = cx.entity().clone();
+        let outer_view = view.clone();
+
+        // Native touch scrolling for the scrollable items area.
+        let view_for_touch = view.clone();
+        window.on_touch_event(move |event: &TouchEvent, phase, window, cx| {
+            view_for_touch.update(cx, |this, cx| {
+                if !this.scrollable || this.menu_items.is_empty() {
+                    return;
+                }
+
+                match (event.phase, phase) {
+                    (TouchPhase::Started, DispatchPhase::Capture) if this.bounds.contains(&event.position) => {
+                        this.touch_start = Some(event.position);
+                        this.touch_last = Some(event.position);
+                        this.touch_scrolling = false;
+                        // Snapshot the current scroll offset so we can accumulate
+                        // deltas during this gesture without reading the handle back
+                        // (it only updates after the next frame).
+                        this.touch_scroll_offset = Some(this.scroll_handle.offset());
+                    }
+                    (TouchPhase::Moved, DispatchPhase::Bubble) => {
+                        let Some(start) = this.touch_start else { return };
+                        if !this.touch_scrolling {
+                            let dx = event.position.x - start.x;
+                            let dy = event.position.y - start.y;
+                            if dx.abs() > TOUCH_SCROLL_THRESHOLD
+                                || dy.abs() > TOUCH_SCROLL_THRESHOLD
+                            {
+                                this.touch_scrolling = true;
+                                window.cancel_pending_touch_click(event.id);
+                            }
+                        }
+
+                        if this.touch_scrolling {
+                            let last = this.touch_last.unwrap_or(event.position);
+                            let delta_y = event.position.y - last.y;
+                            this.touch_last = Some(event.position);
+
+                            // Scroll offset is negative when scrolled down; add the finger delta
+                            // so the content follows the finger (drag down -> scroll up).
+                            let mut current = this.touch_scroll_offset.unwrap_or(this.scroll_handle.offset());
+                            let max = this.scroll_handle.max_offset();
+                            current.y = (current.y + delta_y).clamp(-max.y, px(0.));
+                            this.touch_scroll_offset = Some(current);
+                            this.scroll_handle.set_offset(current);
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }
+                    (TouchPhase::Ended, DispatchPhase::Bubble) => {
+                        if this.touch_scrolling {
+                            cx.stop_propagation();
+                        }
+                        this.touch_start = None;
+                        this.touch_last = None;
+                        this.touch_scrolling = false;
+                        this.touch_scroll_offset = None;
+                    }
+                    (TouchPhase::Cancelled, _) => {
+                        this.touch_start = None;
+                        this.touch_last = None;
+                        this.touch_scrolling = false;
+                        this.touch_scroll_offset = None;
+                    }
+                    _ => {}
+                }
+            });
+        });
+
+        // Dismiss the menu when a touch starts outside of it (and outside any
+        // submenu). This replaces the mouse-only `on_mouse_down_out` behavior
+        // now that touch no longer falls back to mouse events.
+        let dismiss_view = view.clone();
+        window.on_touch_event(move |event: &TouchEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture || event.phase != TouchPhase::Started {
+                return;
+            }
+            dismiss_view.update(cx, |this, cx| {
+                if this.outer_bounds.is_empty() {
+                    return;
+                }
+                if !this.hit_test_menu(&event.position, cx) {
+                    this.handle_dismiss(&event.position, window, cx);
+                    cx.stop_propagation();
+                }
+            });
+        });
+
         let items_count = self.menu_items.len();
 
         let max_height = self.max_height.unwrap_or_else(|| {
@@ -1319,6 +1437,7 @@ impl Render for PopupMenu {
             .text_color(cx.theme().popover_foreground)
             .relative()
             .occlude()
+            .on_prepaint(move |bounds, _, cx| outer_view.update(cx, |r, _| r.outer_bounds = bounds))
             .child(
                 v_flex()
                     .id("items")

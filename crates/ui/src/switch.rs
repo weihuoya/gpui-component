@@ -4,8 +4,8 @@ use crate::{
 };
 use gpui::{
     Animation, AnimationExt as _, App, Background, ElementId, Hsla, InteractiveElement,
-    IntoElement, ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled, Window,
-    div, prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use std::{rc::Rc, time::Duration};
 
@@ -139,90 +139,88 @@ impl RenderOnce for Switch {
             cx.theme().radius
         };
 
-        div().refine_style(&self.style).child(
-            h_flex()
-                .id(self.id.clone())
-                .gap_2()
-                .items_start()
-                .when(self.label_side.is_left(), |this| this.flex_row_reverse())
-                .child(
-                    // Switch Bar
-                    div()
-                        .id(self.id.clone())
-                        .w(bg_width)
-                        .h(bg_height)
-                        .rounded(radius)
-                        .flex()
-                        .items_center()
-                        .border(inset)
-                        .border_color(cx.theme().transparent)
-                        .bg(bg)
-                        .map(|this| self.tooltip.apply(this))
-                        .child(
-                            // Switch Toggle
-                            div()
-                                .rounded(radius)
-                                .bg(toggle_bg)
-                                .shadow_md()
-                                .size(bar_width)
-                                .map(|this| {
-                                    let prev_checked = toggle_state.read(cx);
-                                    if !self.disabled && *prev_checked != checked {
-                                        let duration = Duration::from_secs_f64(0.15);
-                                        cx.spawn({
-                                            let toggle_state = toggle_state.clone();
-                                            async move |cx| {
-                                                cx.background_executor().timer(duration).await;
-                                                _ = toggle_state
-                                                    .update(cx, |this, _| *this = checked);
-                                            }
-                                        })
-                                        .detach();
+        h_flex()
+            .id(self.id.clone())
+            .refine_style(&self.style)
+            .map(|this| self.tooltip.apply(this))
+            .gap_2()
+            .items_start()
+            .when(self.label_side.is_left(), |this| this.flex_row_reverse())
+            .child(
+                // Switch Bar
+                div()
+                    .w(bg_width)
+                    .h(bg_height)
+                    .rounded(radius)
+                    .flex()
+                    .items_center()
+                    .border(inset)
+                    .border_color(cx.theme().transparent)
+                    .bg(bg)
+                    .child(
+                        // Switch Toggle
+                        div()
+                            .rounded(radius)
+                            .bg(toggle_bg)
+                            .shadow_md()
+                            .size(bar_width)
+                            .map(|this| {
+                                let prev_checked = toggle_state.read(cx);
+                                if !self.disabled && *prev_checked != checked {
+                                    let duration = Duration::from_secs_f64(0.15);
+                                    cx.spawn({
+                                        let toggle_state = toggle_state.clone();
+                                        async move |cx| {
+                                            cx.background_executor().timer(duration).await;
+                                            _ = toggle_state
+                                                .update(cx, |this, _| *this = checked);
+                                        }
+                                    })
+                                    .detach();
 
-                                        this.with_animation(
-                                            ElementId::NamedInteger("move".into(), checked as u64),
-                                            Animation::new(duration),
-                                            move |this, delta| {
-                                                let max_x = bg_width - bar_width - inset * 2;
-                                                let x = if checked {
-                                                    max_x * delta
-                                                } else {
-                                                    max_x - max_x * delta
-                                                };
-                                                this.left(x)
-                                            },
-                                        )
-                                        .into_any_element()
-                                    } else {
-                                        let max_x = bg_width - bar_width - inset * 2;
-                                        let x = if checked { max_x } else { px(0.) };
-                                        this.left(x).into_any_element()
-                                    }
-                                }),
-                        ),
-                )
-                .when_some(self.label, |this, label| {
-                    this.child(div().line_height(bg_height).child(label).map(
-                        |this| match self.size {
-                            Size::XSmall | Size::Small => this.text_sm(),
-                            _ => this.text_base(),
-                        },
-                    ))
-                })
-                .when_some(
-                    on_click
-                        .as_ref()
-                        .map(|c| c.clone())
-                        .filter(|_| !self.disabled),
-                    |this, on_click| {
-                        let toggle_state = toggle_state.clone();
-                        this.on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-                            cx.stop_propagation();
-                            _ = toggle_state.update(cx, |this, _| *this = checked);
-                            on_click(&!checked, window, cx);
-                        })
+                                    this.with_animation(
+                                        ElementId::NamedInteger("move".into(), checked as u64),
+                                        Animation::new(duration),
+                                        move |this, delta| {
+                                            let max_x = bg_width - bar_width - inset * 2;
+                                            let x = if checked {
+                                                max_x * delta
+                                            } else {
+                                                max_x - max_x * delta
+                                            };
+                                            this.left(x)
+                                        },
+                                    )
+                                    .into_any_element()
+                                } else {
+                                    let max_x = bg_width - bar_width - inset * 2;
+                                    let x = if checked { max_x } else { px(0.) };
+                                    this.left(x).into_any_element()
+                                }
+                            }),
+                    ),
+            )
+            .when_some(self.label, |this, label| {
+                this.child(div().line_height(bg_height).child(label).map(
+                    |this| match self.size {
+                        Size::XSmall | Size::Small => this.text_sm(),
+                        _ => this.text_base(),
                     },
-                ),
-        )
+                ))
+            })
+            .when_some(
+                on_click
+                    .as_ref()
+                    .map(|c| c.clone())
+                    .filter(|_| !self.disabled),
+                |this, on_click| {
+                    let toggle_state = toggle_state.clone();
+                    this.on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        _ = toggle_state.update(cx, |this, _| *this = checked);
+                        on_click(&!checked, window, cx);
+                    })
+                },
+            )
     }
 }
