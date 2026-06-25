@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, App, DefiniteLength, Edges, EdgesRefinement, Entity, Hsla, InteractiveElement as _,
-    IntoElement, MouseButton, ParentElement as _, Rems, RenderOnce, StyleRefinement, Styled,
-    TextAlign, Window, div, px, relative,
+    AnyElement, App, DefiniteLength, DispatchPhase, Edges, EdgesRefinement, Entity, Hsla,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Rems, RenderOnce,
+    StyleRefinement, Styled, TextAlign, TouchEvent, TouchPhase, Window, div, px, relative,
 };
 
 use crate::button::{Button, ButtonVariants as _};
@@ -317,6 +317,16 @@ impl RenderOnce for Input {
                     .on_action(
                         window.listener_for(&self.state, InputState::on_action_toggle_code_actions),
                     )
+                    .on_touch_event({
+                        let state = self.state.clone();
+                        move |event, window, cx| {
+                            if event.phase == TouchPhase::Started {
+                                state.update(cx, |state, cx| {
+                                    state.focus(window, cx);
+                                });
+                            }
+                        }
+                    })
             })
             .on_action(window.listener_for(&self.state, InputState::left))
             .on_action(window.listener_for(&self.state, InputState::right))
