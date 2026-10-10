@@ -8,7 +8,8 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
     Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
-    UTF16Selection, Window, actions, div, point, prelude::FluentBuilder as _, px,
+    TouchEvent, TouchPhase, UTF16Selection, Window, actions, div, point,
+    prelude::FluentBuilder as _, px,
 };
 use ropey::{Rope, RopeSlice};
 use serde::Deserialize;
@@ -3101,6 +3102,13 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
             )
             .on_mouse_move(window.listener_for(&entity, InputBaseState::on_mouse_move))
             .on_scroll_wheel(window.listener_for(&entity, InputBaseState::on_scroll_wheel))
+            // Focus the input when a touch starts on it; touches don't
+            // generate mouse events, so without this taps never focus.
+            .on_touch_event(window.listener_for(&entity, |state, event: &TouchEvent, window, cx| {
+                if event.phase == TouchPhase::Started && !state.disabled {
+                    state.focus(window, cx);
+                }
+            }))
             .when(!self.disabled, |this| this.cursor_text())
             .flex_1()
             .when(self.is_multi_line(), |this| this.h_full())

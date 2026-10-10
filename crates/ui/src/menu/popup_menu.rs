@@ -11,7 +11,10 @@ use gpui::{
     ParentElement, Pixels, Render, Role, ScrollHandle, SharedString, StatefulInteractiveElement,
     Styled, WeakEntity, Window, anchored, deferred, div, prelude::FluentBuilder, px, rems,
 };
-use gpui::{ClickEvent, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription};
+use gpui::{
+    ClickEvent, DispatchPhase, Half, MouseDownEvent, OwnedMenuItem, Point, Subscription,
+    TouchEvent, TouchPhase,
+};
 
 use std::rc::Rc;
 
@@ -302,6 +305,8 @@ pub struct PopupMenu {
     scrollable: bool,
     external_link_icon: bool,
     scroll_handle: ScrollHandle,
+    // Bounds of the outer popup-menu container, updated on render.
+    outer_bounds: Bounds<Pixels>,
     // This will update on render
     submenu_anchor: (Anchor, Pixels),
 
@@ -337,6 +342,7 @@ impl PopupMenu {
             bounds: Bounds::default(),
             scrollable: false,
             scroll_handle: ScrollHandle::default(),
+            outer_bounds: Bounds::default(),
             external_link_icon: true,
             size: Size::default(),
             submenu_anchor: (Anchor::TopLeft, Pixels::ZERO),
@@ -1081,6 +1087,23 @@ impl PopupMenu {
         self.dismiss(&Cancel, window, cx);
     }
 
+    /// Returns true if the position is inside this menu or any of its submenus.
+    fn hit_test_menu(&self, position: &Point<Pixels>, cx: &App) -> bool {
+        if self.outer_bounds.contains(position) {
+            return true;
+        }
+
+        for item in &self.menu_items {
+            if let PopupMenuItem::Submenu { menu, .. } = item {
+                if menu.read(cx).hit_test_menu(position, cx) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     fn on_mouse_down_out(
         &mut self,
         e: &MouseDownEvent,
@@ -1406,6 +1429,27 @@ impl Render for PopupMenu {
         }
 
         let view = cx.entity().clone();
+        let outer_view = view.clone();
+
+        // Dismiss the menu when a touch starts outside of it (and outside any
+        // submenu). This replaces the mouse-only `on_mouse_down_out` behavior
+        // now that touch no longer falls back to mouse events.
+        let dismiss_view = view.clone();
+        window.on_touch_event(move |event: &TouchEvent, phase, window, cx| {
+            if phase != DispatchPhase::Capture || event.phase != TouchPhase::Started {
+                return;
+            }
+            dismiss_view.update(cx, |this, cx| {
+                if this.outer_bounds.is_empty() {
+                    return;
+                }
+                if !this.hit_test_menu(&event.position, cx) {
+                    this.handle_dismiss(&event.position, window, cx);
+                    cx.stop_propagation();
+                }
+            });
+        });
+
         let items_count = self.menu_items.len();
 
         let max_height = self.max_height.unwrap_or_else(|| {
@@ -1441,6 +1485,7 @@ impl Render for PopupMenu {
             .text_color(cx.theme().popover_foreground)
             .relative()
             .occlude()
+            .on_prepaint(move |bounds, _, cx| outer_view.update(cx, |r, _| r.outer_bounds = bounds))
             .child(
                 v_flex()
                     .id("items")
