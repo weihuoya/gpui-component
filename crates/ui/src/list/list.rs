@@ -19,16 +19,28 @@ use gpui::{
 };
 use gpui::{
     AppContext, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
-    Length, MouseButton, ParentElement, Render, Styled, Task, Window, div, prelude::FluentBuilder,
+    KeyBindingContextPredicate, Length, MouseButton, ParentElement, Render, Styled, Task, Window,
+    div, prelude::FluentBuilder,
 };
 use rust_i18n::t;
 
 pub(crate) fn init(cx: &mut App) {
     let context: Option<&str> = Some("List");
+    let secondary_context = KeyBindingContextPredicate::parse("List")
+        .expect("valid List keybinding context")
+        .into();
     cx.bind_keys([
         KeyBinding::new("escape", Cancel, context),
         KeyBinding::new("enter", Confirm { secondary: false }, context),
-        KeyBinding::new("secondary-enter", Confirm { secondary: true }, context),
+        KeyBinding::load(
+            "secondary-enter",
+            Box::new(Confirm { secondary: true }),
+            Some(secondary_context),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid secondary-enter keybinding"),
         KeyBinding::new("up", SelectUp, context),
         KeyBinding::new("down", SelectDown, context),
     ]);
@@ -491,7 +503,7 @@ where
                     this.selected_index = Some(ix);
                     this.on_action_confirm(
                         &Confirm {
-                            secondary: e.modifiers().secondary(),
+                            secondary: e.modifiers().secondary(cx),
                         },
                         window,
                         cx,

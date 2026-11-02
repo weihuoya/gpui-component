@@ -2,8 +2,9 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ElementId, FocusHandle, InteractiveElement as _, IntoElement, KeyBinding,
-    ParentElement, RenderOnce, Role, SharedString, StatefulInteractiveElement as _,
-    StyleRefinement, Styled, Window, div, prelude::FluentBuilder as _,
+    KeyBindingContextPredicate, ParentElement, RenderOnce, Role, SharedString,
+    StatefulInteractiveElement as _, StyleRefinement, Styled, Window, div,
+    prelude::FluentBuilder as _,
 };
 
 use crate::StyledExt as _;
@@ -13,15 +14,22 @@ const CONTEXT: &str = "Select";
 
 #[doc(hidden)]
 pub fn init(cx: &mut App) {
+    let secondary_context = KeyBindingContextPredicate::parse(CONTEXT)
+        .expect("valid Select keybinding context")
+        .into();
     cx.bind_keys([
         KeyBinding::new("up", SelectUp, Some(CONTEXT)),
         KeyBinding::new("down", SelectDown, Some(CONTEXT)),
         KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-enter",
-            Confirm { secondary: true },
-            Some(CONTEXT),
-        ),
+            Box::new(Confirm { secondary: true }),
+            Some(secondary_context),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid secondary-enter keybinding"),
         KeyBinding::new("escape", Cancel, Some(CONTEXT)),
     ]);
 }
