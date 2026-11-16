@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, FocusHandle, IntoElement, KeyBinding, ParentElement, RenderOnce,
-    StyleRefinement, Styled, Window, prelude::FluentBuilder as _,
+    AnyElement, App, ElementId, FocusHandle, IntoElement, KeyBinding, KeyBindingContextPredicate,
+    ParentElement, RenderOnce, StyleRefinement, Styled, Window, prelude::FluentBuilder as _,
 };
 
 use crate::{
@@ -14,15 +14,22 @@ use crate::{
 const CONTEXT: &str = "Combobox";
 
 pub(crate) fn init(cx: &mut App) {
+    let secondary_context = KeyBindingContextPredicate::parse(CONTEXT)
+        .expect("valid Combobox keybinding context")
+        .into();
     cx.bind_keys([
         KeyBinding::new("up", SelectUp, Some(CONTEXT)),
         KeyBinding::new("down", SelectDown, Some(CONTEXT)),
         KeyBinding::new("enter", Confirm { secondary: false }, Some(CONTEXT)),
-        KeyBinding::new(
+        KeyBinding::load(
             "secondary-enter",
-            Confirm { secondary: true },
-            Some(CONTEXT),
-        ),
+            Box::new(Confirm { secondary: true }),
+            Some(secondary_context),
+            false,
+            None,
+            cx,
+        )
+        .expect("valid secondary-enter keybinding"),
         KeyBinding::new("escape", Cancel, Some(CONTEXT)),
     ]);
 }

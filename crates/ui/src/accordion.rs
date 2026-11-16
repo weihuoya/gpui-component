@@ -189,14 +189,6 @@ impl AnimatedAccordionPanel {
     }
 }
 
-impl IntoElement for AnimatedAccordionPanel {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for AnimatedAccordionPanel {
     type RequestLayoutState = ();
     type PrepaintState = ();

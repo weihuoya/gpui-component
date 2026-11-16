@@ -4,7 +4,7 @@ use gpui::{
     AccessibleAction, Along, AnyElement, App, AppContext as _, Axis, Bounds, Context, Div,
     DragMoveEvent, Empty, Entity, EntityId, EventEmitter, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, Orientation, ParentElement, Pixels, Point, Render, RenderOnce,
-    Role, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
+    Role, StatefulInteractiveElement, StyleRefinement, Styled, TouchEvent, TouchPhase, Window, div,
     prelude::FluentBuilder as _, px,
 };
 
@@ -607,6 +607,32 @@ impl RenderOnce for SliderTrack {
                         },
                     ),
                 )
+                .on_touch_event(window.listener_for(
+                    &self.state,
+                    move |state, event: &TouchEvent, window, cx| {
+                        match event.phase {
+                            // Touch tap-to-jump, mirroring the mouse-down
+                            // handler; drags are delivered by gpui's touch-drag
+                            // synthesis as DragMoveEvent and handled above.
+                            TouchPhase::Started => {
+                                state.update_value_by_position(
+                                    axis,
+                                    event.position,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            // A tap ends without a drag, so no synthesized
+                            // mouse-up arrives; release here (hover-gated,
+                            // which is fine for taps).
+                            TouchPhase::Ended | TouchPhase::Cancelled => {
+                                state.handle_release(cx);
+                            }
+                            _ => {}
+                        }
+                    },
+                ))
                 .when(!is_range, |this| {
                     this.on_drag(DragSlider(entity_id), |drag, _, _, cx| {
                         cx.stop_propagation();

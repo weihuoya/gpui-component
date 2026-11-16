@@ -488,6 +488,7 @@ impl RenderOnce for Dialog {
         let escape_change = self.on_open_change.clone();
         let confirm_change = self.on_open_change.clone();
         let backdrop_change = self.on_open_change.clone();
+        let backdrop_layer = self.layer;
         let viewport = window.viewport_size();
 
         deferred(
@@ -542,8 +543,14 @@ impl RenderOnce for Dialog {
                         let cancel = self.on_cancel.clone();
                         let closed = self.on_close.clone();
                         let request_close = request_close.clone();
+                        let touch_cancel = self.on_cancel.clone();
+                        let touch_closed = self.on_close.clone();
+                        let touch_request_close = request_close.clone();
+                        let touch_handle = self.handle.clone();
+                        let touch_change = self.on_open_change.clone();
                         this.child(
                             div()
+                                .id(("dialog-backdrop", backdrop_layer))
                                 .on_any_mouse_down(move |event, window, cx| {
                                     if event.position.y < dismiss_below_y {
                                         return;
@@ -565,6 +572,31 @@ impl RenderOnce for Dialog {
                                         );
                                         request_close(false, window, cx);
                                         closed(&event, window, cx);
+                                    }
+                                })
+                                // Touches don't generate mouse events, so a tap
+                                // on the backdrop never reaches the handler
+                                // above; close on the synthesized touch click.
+                                .on_click(move |event, window, cx| {
+                                    let ClickEvent::Touch(touch) = event else {
+                                        return;
+                                    };
+                                    if touch.position.y < dismiss_below_y {
+                                        return;
+                                    }
+                                    cx.stop_propagation();
+                                    let event = ClickEvent::default();
+                                    if overlay_closable && touch_cancel(&event, window, cx) {
+                                        request_open_change(
+                                            &touch_handle,
+                                            &touch_change,
+                                            false,
+                                            DialogChangeReason::BackdropPress,
+                                            window,
+                                            cx,
+                                        );
+                                        touch_request_close(false, window, cx);
+                                        touch_closed(&event, window, cx);
                                     }
                                 })
                                 .child(backdrop),

@@ -1,13 +1,14 @@
 use std::rc::Rc;
 
 use gpui::{
-    Anchor, AnyElement, App, Context, DismissEvent, ElementId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _,
-    Render, RenderOnce, Role, StatefulInteractiveElement as _, Subscription, Window, div,
+    Anchor, AnyElement, App, Bounds, Context, DismissEvent, DispatchPhase, ElementId,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
+    MouseButton, ParentElement as _, Pixels, Render, RenderOnce, Role,
+    StatefulInteractiveElement as _, Subscription, TouchEvent, TouchPhase, Window, div,
     prelude::FluentBuilder as _,
 };
 
-use crate::{DeferredPopover, GlobalState, Popup, Selectable, actions::Cancel};
+use crate::{DeferredPopover, ElementExt as _, GlobalState, Popup, Selectable, actions::Cancel};
 
 const CONTEXT: &str = "Popover";
 
@@ -29,6 +30,10 @@ pub struct PopoverState {
     open: bool,
     on_open_change: Option<OpenChangeHandler>,
     dismiss_subscription: Option<Subscription>,
+    /// Bounds of the rendered popover content, used to dismiss the popover on
+    /// a touch starting outside of it (touches don't generate mouse events,
+    /// so `on_mouse_down_out` never fires for them).
+    content_bounds: Bounds<Pixels>,
     /// Held while open, so that a state collected without being closed — this
     /// lives in element state — takes its registration with it.
     deferred_context: Option<DeferredPopover>,
@@ -43,6 +48,7 @@ impl PopoverState {
             open: default_open,
             on_open_change: None,
             dismiss_subscription: None,
+            content_bounds: Bounds::default(),
             deferred_context: None,
         }
     }
@@ -273,6 +279,22 @@ impl RenderOnce for Popover {
                     });
                     cx.notify(parent_view_id);
                 }
+            })
+            // Touches don't generate mouse events; handle taps on the trigger
+            // through the synthesized touch click instead.
+            .on_click({
+                let state = state.clone();
+                move |event, window, cx| {
+                    if !matches!(event, gpui::ClickEvent::Touch(_)) {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    state.update(cx, |state, cx| {
+                        state.set_open(open, cx);
+                        state.toggle_open(window, cx);
+                    });
+                    cx.notify(parent_view_id);
+                }
             });
         if !open {
             return popup.into_any_element();
@@ -289,6 +311,12 @@ impl RenderOnce for Popover {
             .track_focus(&focus_handle)
             .key_context(CONTEXT)
             .on_action(window.listener_for(&state, PopoverState::on_action_cancel))
+            .on_prepaint({
+                let state = state.clone();
+                move |bounds, _, cx| {
+                    state.update(cx, |state, _| state.content_bounds = bounds);
+                }
+            })
             .when_some(self.content, |this, content| {
                 this.child(state.update(cx, |state, cx| (content)(state, window, cx)))
             })
@@ -301,6 +329,28 @@ impl RenderOnce for Popover {
                     }
                 })
             });
+
+        // Dismiss on a touch starting outside the popover content. Touches
+        // don't generate mouse events, so `on_mouse_down_out` never fires for
+        // them. Tapping the trigger also lands here and simply closes the
+        // popover, matching the mouse path where `on_mouse_down_out` and the
+        // trigger press both close it.
+        if self.overlay_closable {
+            let state = state.clone();
+            window.on_touch_event(move |event: &TouchEvent, phase, window, cx| {
+                if phase != DispatchPhase::Capture || event.phase != TouchPhase::Started {
+                    return;
+                }
+                let content_bounds = state.read(cx).content_bounds;
+                if content_bounds.is_empty() || content_bounds.contains(&event.position) {
+                    return;
+                }
+                state.update(cx, |state, cx| state.dismiss(window, cx));
+                cx.notify(parent_view_id);
+                cx.stop_propagation();
+            });
+        }
+
         popup.content(content).into_any_element()
     }
 }

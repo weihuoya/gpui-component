@@ -5,10 +5,11 @@ use std::{
 
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, HighlightStyle, InspectorElementId, InteractiveElement as _, IntoElement,
-    LayoutId, LineFragment as WrapLineFragment, ObjectFit, Pixels, ShapedLine, SharedString,
-    SharedUri, Size, StatefulInteractiveElement as _, Styled, StyledImage as _, TextRun, TextStyle,
-    WhiteSpace, Window, img, point, prelude::FluentBuilder as _, px, relative, size,
+    GlobalElementId, HighlightStyle, IndentAdjustment, InspectorElementId,
+    InteractiveElement as _, IntoElement, LayoutId, LineFragment as WrapLineFragment, ObjectFit,
+    Pixels, ShapedLine, SharedString, SharedUri, Size, StatefulInteractiveElement as _, Styled,
+    StyledImage as _, TextRun, TextStyle, WhiteSpace, Window, img, point,
+    prelude::FluentBuilder as _, px, relative, size,
 };
 
 use crate::{
@@ -161,14 +162,6 @@ impl InlineFlow {
                     })
             })
             .into_any_element()
-    }
-}
-
-impl IntoElement for InlineFlow {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }
 
@@ -582,7 +575,7 @@ fn line_ranges(
             .collect::<Vec<_>>();
 
         let boundaries = wrapper
-            .wrap_line(&wrap_fragments, wrap_width)
+            .wrap_line(&wrap_fragments, wrap_width, IndentAdjustment::SameIndent)
             .map(|boundary| hard_line.start + boundary.ix.min(hard_line.len()))
             .collect::<Vec<_>>();
         let mut start = hard_line.start;

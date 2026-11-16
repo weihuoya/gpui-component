@@ -328,14 +328,6 @@ impl Inline {
     }
 }
 
-impl IntoElement for Inline {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for Inline {
     type RequestLayoutState = ();
     type PrepaintState = Hitbox;
